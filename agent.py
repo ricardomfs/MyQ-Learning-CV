@@ -1,12 +1,9 @@
 import os
-import time
 import random
 import argparse
 from datetime import datetime, timedelta
-import shutil
 import itertools
 import yaml
-import keyboard
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
@@ -16,7 +13,7 @@ from torch import nn
 
 import gymnasium as gym
 
-from dqn import DQN
+from dqn import DQCNN
 from experience_replay import ReplayMemory
 
 
@@ -25,10 +22,8 @@ DATE_FORMAT = "%m-%d %H:%M:%S"
 dir_path = os.path.dirname(__file__)
 
 RUNS_DIR = os.path.join(dir_path, 'runs')
-BACKUP_DIR = os.path.join(dir_path, 'runs_backup')
 
 os.makedirs(RUNS_DIR, exist_ok=True)
-os.makedirs(BACKUP_DIR, exist_ok=True)
 
 matplotlib.use('Agg')
 
@@ -52,7 +47,8 @@ class Agent:
         self.discount_factor_g = hyperparameters['discount_factor_g']
         self.learning_rate_a = hyperparameters['learning_rate_a']
         self.stop_on_reward = hyperparameters['stop_on_reward']
-        self.fc1_nodes = hyperparameters['fc1_nodes']
+        self.fc_nodes = hyperparameters['fc_nodes']
+        self.input_channels = hyperparameters['input_channels']
         self.env_make_params = hyperparameters.get('env_make_params', {}) #Get Optional enviroment-specific parameters
 
         self.loss_fn = nn.MSELoss()
@@ -77,19 +73,18 @@ class Agent:
             with open(self.LOG_FILE, 'w') as file:
                 file.write(log_message + '\n')
 
-        env = gym.make('CartPole-v1', render_mode="human" if render else None)
+        env = gym.make("CarRacing-v2", render_mode="rgb_array", lap_complete_percent=0.95, domain_randomize=True, continuous=False)
 
-        n_states = env.observation_space.shape[0]
         n_actions = env.action_space.n
 
-        policy_dqn = DQN(n_states, n_actions, self.fc1_nodes).to(device)
+        policy_dqn = DQCNN(self.input_channels, n_actions, self.fc_nodes).to(device)
 
         if is_training:
             memory = ReplayMemory(self.replay_memory_size)
 
             epsilon = self.epsilon_init
 
-            target_dqn = DQN(n_states, n_actions, self.fc1_nodes).to(device)
+            target_dqn = DQCNN(self.input_channels, n_actions, self.fc_nodes).to(device)
             target_dqn.load_state_dict(policy_dqn.state_dict())
 
             step_counter = 0
@@ -236,35 +231,15 @@ class Agent:
             fig.savefig(self.GRAPH_FILE)
             plt.close(fig)
 
-def get_action(): 
-    if keyboard.is_pressed('left'): 
-        return 0
-    if keyboard.is_pressed('right'):
-        return 1
-    return 0
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train or test model.')
     parser.add_argument('hyperparameters', help='')
     parser.add_argument('--train', help='Training Mode', action='store_true')
-    parser.add_argument('--user_control', help='Manual Control Mode', action='store_true')
     args = parser.parse_args()
 
     dq1 = Agent(hyperparameter_set=args.hyperparameters)
     
-    if args.train and not args.user_control:
+    if args.train:
         dq1.run(is_training=True)
-    elif args.user_control:
-        for episode in itertools.count():
-            env = gym.make('CartPole-v1', render_mode="human")
-            env.reset()
-
-            terminated = False
-            while not terminated:
-                env.render()
-                action = get_action()
-                new_state, reward, terminated, _, info = env.step(action)
-                
-        env.close()
     else:
         dq1.run(is_training=False, render=True)

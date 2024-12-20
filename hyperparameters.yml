@@ -1,20 +1,5 @@
-ravenfield:
-  env_id: None
-  replay_memory_size: 100000
-  mini_batch_size: 16
-  ##No começo o agente terá 100% de chance de executar uma interação randomica e vai diminuindo n = n * 0.9995 até um minimo de n = 0.05 onde o agente tera 5%
-  ##de chance de tomar uma ação randomica
-  epsilon_init: 1
-  epsilon_decay: 0.99905
-  epsilon_min: 0.05
-  network_sync_rate: 10
-  discount_factor_g: 0.99
-  learning_rate_a: 0.001
-  stop_on_reward: 100000
-  fc1_nodes: 256
-
-cartpole1:
-  env_id: CartPole-v1
+carracing:
+  env_id: CarRacing-v2
   replay_memory_size: 100000
   mini_batch_size: 32
   ##No começo o agente terá 100% de chance de executar uma interação randomica e vai diminuindo n = n * 0.9995 até um minimo de n = 0.05 onde o agente tera 5%
@@ -25,5 +10,6 @@ cartpole1:
   network_sync_rate: 10
   discount_factor_g: 0.99
   learning_rate_a: 0.001
-  stop_on_reward: 300000
-  fc1_nodes: 10
+  stop_on_reward: 100000
+  fc_nodes: 256
+  input_channels: 3
