@@ -12,6 +12,7 @@ import torch
 from torch import nn
 
 import gymnasium as gym
+import miniworld
 
 from dqn import DQCNN
 from experience_replay import ReplayMemory
@@ -73,7 +74,7 @@ class Agent:
             with open(self.LOG_FILE, 'w') as file:
                 file.write(log_message + '\n')
 
-        env = gym.make("CarRacing-v2", render_mode="rgb_array", lap_complete_percent=0.95, domain_randomize=True, continuous=False)
+        env = gym.make("MiniWorld-OneRoom-v0", render_mode="human" if render else None)
 
         n_actions = env.action_space.n
 
@@ -118,7 +119,7 @@ class Agent:
                 else:
                     with torch.no_grad():
                         # tensor([1,2,3,...]) ==> tensor([[1,2,3,...]])
-                        action = policy_dqn(state.unsqueeze(dim=0)).squeeze().argmax()
+                        action = policy_dqn(state.unsqueeze(1).permute(1, 3, 0, 2)).squeeze().argmax()
 
                 new_state, reward, terminated, _, info = env.step(int(action.item()))
 
@@ -176,6 +177,10 @@ class Agent:
         actions = torch.stack(actions)
 
         new_states = torch.stack(new_states)
+        
+        # Reorganiza para [B, C, H, W]
+        states = states.permute(0, 3, 1, 2)
+        new_states = new_states.permute(0, 3, 1, 2)  
 
         rewards = torch.stack(rewards)
         terminations = torch.tensor(terminations).float().to(device)
@@ -190,6 +195,7 @@ class Agent:
                 '''
 
         # Calcuate Q values from current policy
+        print(f"shape states: {states.shape}")
         current_q = policy_dqn(states).gather(dim=1, index=actions.unsqueeze(dim=1).long()).squeeze()
         '''
             policy_dqn(states)  ==> tensor([[1,2,3],[4,5,6]])
