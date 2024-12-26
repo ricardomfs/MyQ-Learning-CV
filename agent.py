@@ -1,3 +1,4 @@
+import cv2 as cv
 import os
 import random
 import argparse
@@ -64,7 +65,7 @@ class Agent:
         # será inserido dinamicamente
         self.MODEL_FILE = f'{self.hyperparameter_set}.pt'
 
-    def run(self, is_training=True, render=False):
+    def run(self, is_training=True, render=True):
         if is_training:
             start_time = datetime.now()
             last_graph_update_time = start_time
@@ -74,7 +75,8 @@ class Agent:
             with open(self.LOG_FILE, 'w') as file:
                 file.write(log_message + '\n')
 
-        env = gym.make("MiniWorld-OneRoom-v0", render_mode="human" if render else None)
+        # env = gym.make("MiniWorld-OneRoom-v0", render_mode="human" if render else None)
+        env = gym.make('MiniWorld-OneRoom-v0', render_mode="rgb_array")
 
         n_actions = env.action_space.n
 
@@ -95,23 +97,25 @@ class Agent:
             best_reward = -9999999
             epsilon_history = []
         else:
-            selected_model = "6307"
+            selected_model = "last_weight"
             print(f"Loading the model number {selected_model}")
-            policy_dqn.load_state_dict(torch.load(f"{RUNS_DIR}/{selected_model}-{self.MODEL_FILE}", weights_only=False))
+            policy_dqn.load_state_dict(torch.load(f"{RUNS_DIR}/{selected_model}", weights_only=False))
 
             policy_dqn.eval()
 
         rewards_per_episode = []
         #roda indefinidamente
-        for episode in itertools.count():
+        # for episode in itertools.count():
+        for episode in range(1):
 
             state, _ = env.reset()
             state = torch.tensor(state, dtype=torch.float, device=device)
 
             terminated = False
+            truncated = False
             episode_reward = 0.0
 
-            while not terminated and episode_reward < self.stop_on_reward:
+            while not terminated and not truncated and episode_reward < self.stop_on_reward:
 
                 if is_training and random.random() < epsilon:
                     action = env.action_space.sample()  # agent policy that uses the observation and info
@@ -121,12 +125,12 @@ class Agent:
                         # tensor([1,2,3,...]) ==> tensor([[1,2,3,...]])
                         action = policy_dqn(state.unsqueeze(1).permute(1, 3, 0, 2)).squeeze().argmax()
 
-                new_state, reward, terminated, _, info = env.step(int(action.item()))
-
+                new_state, reward, terminated, truncated, info = env.step(int(action.item()))
                 episode_reward += reward
 
                 new_state = torch.tensor(new_state, dtype=torch.float, device=device)
                 reward = torch.tensor(reward, dtype=torch.float, device=device)
+
 
                 if is_training:
                     memory.append((state, action, new_state, reward, terminated))
@@ -136,19 +140,29 @@ class Agent:
                 state = new_state
 
             rewards_per_episode.append(episode_reward)
+            if render:                
+                frame = np.ascontiguousarray(env.render())[..., :-1]
+                # img = np.ascontiguousarray(img)[..., :-1]  # make image C_CONTIGUOUS and drop alpha channel
+                print(frame.shape)
+                cv.imshow("Window", cv.cvtColor(frame, cv.COLOR_RGB2BGR))
 
             if is_training:
                 if episode_reward > best_reward:
-                    log_message = f'{datetime.now().strftime(DATE_FORMAT)}: New best reward {episode_reward:0.1f} ({(episode_reward - best_reward)/best_reward*100:+.1f}%) at episode {episode} saving model...'
+                    percentage_gain = f"{(episode_reward - best_reward)/best_reward*100:+.1f}" if best_reward != 0 else f"{100:+.1f}"
+                    log_message = f'{datetime.now().strftime(DATE_FORMAT)}: New best reward {episode_reward:0.1f} ({percentage_gain}%) at episode {episode} saving model...'
                     print(log_message)
                     with open(self.LOG_FILE, 'a') as file:
                         file.write(log_message + '\n')
                     
                         torch.save(policy_dqn.state_dict(), f"{RUNS_DIR}/{episode}")
                     best_reward = episode_reward
-                
+
+                if(episode % 100 and epsilon < 0.1):
+                    torch.save(policy_dqn.state_dict(), f"{RUNS_DIR}/last_weight")
+
                 current_time = datetime.now()
                 if current_time - last_graph_update_time > timedelta(seconds = 10):
+                    print(f"Maior Recompensa: {max(rewards_per_episode)}")
                     self.save_graph(rewards_per_episode, epsilon_history)
                     last_graph_update_time = current_time
                     
@@ -165,6 +179,8 @@ class Agent:
                     if(step_counter > self.network_sync_rate):
                         target_dqn.load_state_dict(policy_dqn.state_dict())
                         step_counter=0
+        
+        cv.destroyAllWindows()
 
     def optimize(self, mini_batch, policy_dqn, target_dqn):
         # Transpose the list of experiences and separate each element
@@ -195,7 +211,6 @@ class Agent:
                 '''
 
         # Calcuate Q values from current policy
-        print(f"shape states: {states.shape}")
         current_q = policy_dqn(states).gather(dim=1, index=actions.unsqueeze(dim=1).long()).squeeze()
         '''
             policy_dqn(states)  ==> tensor([[1,2,3],[4,5,6]])

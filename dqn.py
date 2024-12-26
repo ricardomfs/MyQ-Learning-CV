@@ -16,7 +16,6 @@ class DQCNN(nn.Module):
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         x = F.relu(self.conv3(x))
-        print(x.shape)
         x = x.reshape(x.size(0), -1) # "Achata as dimensões para a entrada no layer denso fc"
         x = F.relu(self.fc1(x))
 
