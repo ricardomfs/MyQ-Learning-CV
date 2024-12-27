@@ -17,3 +17,11 @@ class ReplayMemory():
     
     def __len__(self):
         return len(self.memory)
+    
+    def save_memory(self, file_path):
+        with open(file_path, 'wb') as file:
+            pickle.dump(self.memory, file)
+
+    def load_memory(self, file_path):
+        with open(file_path, 'rb') as file:
+            self.memory = pickle.load(file)

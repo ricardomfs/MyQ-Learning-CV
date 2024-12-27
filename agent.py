@@ -1,3 +1,5 @@
+import pickle
+import time
 import cv2 as cv
 import os
 import random
@@ -87,31 +89,31 @@ class Agent:
             with open(self.LOG_FILE, 'w') as file:
                 file.write(log_message + '\n')
 
-        # env = gym.make("MiniWorld-OneRoom-v0", render_mode="human" if render else None)
-        env = gym.make('MiniWorld-OneRoom-v0', render_mode="human", size=20)
+        env = gym.make('MiniWorld-OneRoom-v0', render_mode="human" if render else None)
 
         n_actions = env.action_space.n
 
         self.policy_dqn = DQCNN(self.input_channels, n_actions, self.fc_nodes).to(device)
 
         if is_training:
+            self.optimizer = torch.optim.Adam(self.policy_dqn.parameters(), lr=self.learning_rate_a)
+            self.target_dqn = DQCNN(self.input_channels, n_actions, self.fc_nodes).to(device)
             self.replay_memory = ReplayMemory(self.replay_memory_size)
 
-            self.epsilon = self.epsilon_init
+            if os.path.isfile(f"{RUNS_DIR}/{CHECKPOINT_FILE_NAME}"):
+                
+                print("Carregando o checkpoint:")
+                self.load_checkpoint()
+                print(f"Episodio: {self.episode}\nMemória: {len(self.replay_memory)}\nEpsilon: {self.epsilon}\nStep_counter: {self.step_counter}\nBest_reward:{self.best_reward}")
+            else:
+                print("Novo modelo")
 
-            self.target_dqn = DQCNN(self.input_channels, n_actions, self.fc_nodes).to(device)
-            self.target_dqn.load_state_dict(self.policy_dqn.state_dict())
+                self.epsilon = self.epsilon_init
 
-            self.step_counter = 0
-
-            self.optimizer = torch.optim.Adam(self.policy_dqn.parameters(), lr=self.learning_rate_a)
-
-            self.best_reward = -9999999
-            self.epsilon_history = []
+                self.target_dqn.load_state_dict(self.policy_dqn.state_dict())
         else:
-            selected_model = "last_weight"
-            print(f"Loading the model number {selected_model}")
-            self.policy_dqn.load_state_dict(torch.load(f"{RUNS_DIR}/{selected_model}", weights_only=False))
+            self.load_model()
+            print(f"Loading the model number {self.episode}")
 
             self.policy_dqn.eval()
 
@@ -137,7 +139,7 @@ class Agent:
                         # tensor([1,2,3,...]) ==> tensor([[1,2,3,...]])
                         action = self.policy_dqn(state.unsqueeze(1).permute(1, 3, 0, 2)).squeeze().argmax()
 
-                new_state, reward, terminated, truncated, info = env.step(int(action.item()))
+                new_state, reward, terminated, truncated, _ = env.step(int(action.item()))
                 episode_reward += reward
 
                 new_state = torch.tensor(new_state, dtype=torch.float, device=device)
@@ -166,30 +168,31 @@ class Agent:
                         torch.save(self.policy_dqn.state_dict(), f"{RUNS_DIR}/{self.episode}")
                     self.best_reward = episode_reward
 
-                if(self.episode % 100 and self.epsilon < 0.1):
-                    torch.save(self.policy_dqn.state_dict(), f"{RUNS_DIR}/last_weight")
-
                 current_time = datetime.now()
                 if current_time - last_graph_update_time > timedelta(seconds = 10):
-                    print(f"Maior Recompensa: {max(self.rewards_per_episode)}")
+                    print(f"Recompensa do Episodio {self.episode + 1}: {episode_reward}")
+                    print(f"Valor de Epsilon: {self.epsilon}")
                     self.save_graph()
                     last_graph_update_time = current_time
                     
                 self.epsilon = max(self.epsilon * self.epsilon_decay, self.epsilon_min)
                 self.epsilon_history.append(self.epsilon)
 
+
+                if(self.episode % 100 == 0 and self.epsilon < 0.5):
+                    self.save_checkpoint()
+
                 if(len(self.replay_memory) > self.mini_batch_size):
 
                     mini_batch = self.replay_memory.sample(self.mini_batch_size)
-
                     self.optimize(mini_batch)
 
                     #atualiza a target network depois de alguns passos
                     if(self.step_counter > self.network_sync_rate):
                         self.target_dqn.load_state_dict(self.policy_dqn.state_dict())
                         self.step_counter=0
-        
-        cv.destroyAllWindows()
+
+            self.episode += 1
 
     def optimize(self, mini_batch):
         # Transpose the list of experiences and separate each element
@@ -237,29 +240,76 @@ class Agent:
         self.optimizer.step()       # Update network parameters i.e. weights and biases
 
     def save_graph(self):
-            # Save plots
-            fig = plt.figure(1)
+        # Save plots
+        fig = plt.figure(1)
 
-            # Plot average rewards (Y-axis) vs episodes (X-axis)
-            mean_rewards = np.zeros(len(self.rewards_per_episode))
-            for x in range(len(mean_rewards)):
-                mean_rewards[x] = np.mean(self.rewards_per_episode[max(0, x-99):(x+1)])
-            plt.subplot(121) # plot on a 1 row x 2 col grid, at cell 1
-            # plt.xlabel('Episodes')
-            plt.ylabel('Mean Rewards')
-            plt.plot(mean_rewards)
+        # Plot average rewards (Y-axis) vs episodes (X-axis)
+        mean_rewards = np.zeros(len(self.rewards_per_episode))
+        for x in range(len(mean_rewards)):
+            mean_rewards[x] = np.mean(self.rewards_per_episode[max(0, x-99):(x+1)])
+        plt.subplot(121) # plot on a 1 row x 2 col grid, at cell 1
+        # plt.xlabel('Episodes')
+        plt.ylabel('Mean Rewards')
+        plt.plot(mean_rewards)
 
-            # Plot epsilon decay (Y-axis) vs episodes (X-axis)
-            plt.subplot(122) # plot on a 1 row x 2 col grid, at cell 2
-            # plt.xlabel('Time Steps')
-            plt.ylabel('Epsilon Decay')
-            plt.plot(self.epsilon_history)
+        # Plot epsilon decay (Y-axis) vs episodes (X-axis)
+        plt.subplot(122) # plot on a 1 row x 2 col grid, at cell 2
+        # plt.xlabel('Time Steps')
+        plt.ylabel('Epsilon Decay')
+        plt.plot(self.epsilon_history)
 
-            plt.subplots_adjust(wspace=1.0, hspace=1.0)
+        plt.subplots_adjust(wspace=1.0, hspace=1.0)
 
-            # Save plots
-            fig.savefig(self.GRAPH_FILE)
-            plt.close(fig)
+        # Save plots
+        fig.savefig(self.GRAPH_FILE)
+        plt.close(fig)
+        
+    def save_checkpoint(self, filename="checkpoint.pth"):
+        checkpoint = {
+            "episode": self.episode,
+            "epsilon": self.epsilon,
+            "best_reward": self.best_reward,
+            "step_counter": self.step_counter,
+            "model_state_dict": self.policy_dqn.state_dict(),
+            "model_target_dict": self.target_dqn.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+        }
+        torch.save(checkpoint, f"{RUNS_DIR}/{filename}")
+        time.sleep(3)
+
+        with open(os.path.join(RUNS_DIR, 'epsilon-array.pkl'), 'wb') as arquivo:
+            pickle.dump(self.epsilon_history, arquivo)
+            
+        time.sleep(1)
+
+        with open(os.path.join(RUNS_DIR, 'reward-array.pkl'), 'wb') as arquivo:
+            pickle.dump(self.rewards_per_episode, arquivo)
+
+        time.sleep(1)
+        
+        print(f"Checkpoint salvo!")
+
+    def load_checkpoint(self, filename="checkpoint.pth"):
+        checkpoint = torch.load(f"{RUNS_DIR}/{filename}")
+
+        self.policy_dqn.load_state_dict(checkpoint["model_state_dict"])
+        self.target_dqn.load_state_dict(checkpoint["model_target_dict"])
+        self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        self.episode = checkpoint["episode"]
+        self.epsilon = checkpoint["epsilon"]
+        self.best_reward = checkpoint["best_reward"]
+        self.step_counter = checkpoint["step_counter"]
+
+        with open(os.path.join(RUNS_DIR, 'epsilon-array.pkl'), 'rb') as arquivo:
+            self.epsilon_history = pickle.load(arquivo)
+
+        with open(os.path.join(RUNS_DIR, 'reward-array.pkl'), 'rb') as arquivo:
+            self.rewards_per_episode = pickle.load(arquivo)
+
+    def load_model(self, filename="checkpoint.pth"):
+        checkpoint = torch.load(f"{RUNS_DIR}/{filename}")
+        self.policy_dqn.load_state_dict(checkpoint["model_state_dict"])
+        self.episode = checkpoint["episode"]
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train or test model.')

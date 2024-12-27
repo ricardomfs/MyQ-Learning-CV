@@ -5,7 +5,7 @@ mw-one-room:
   ##No começo o agente terá 100% de chance de executar uma interação randomica e vai diminuindo n = n * 0.9995 até um minimo de n = 0.05 onde o agente tera 5%
   ##de chance de tomar uma ação randomica
   epsilon_init: 1
-  epsilon_decay: 0.99905
+  epsilon_decay: 0.998503255
   epsilon_min: 0.05
   network_sync_rate: 10
   discount_factor_g: 0.99
