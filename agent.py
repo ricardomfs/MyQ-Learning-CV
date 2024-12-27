@@ -20,6 +20,7 @@ from experience_replay import ReplayMemory
 
 
 DATE_FORMAT = "%m-%d %H:%M:%S"
+CHECKPOINT_FILE_NAME = "checkpoint.pth"
 
 dir_path = os.path.dirname(__file__)
 
@@ -56,6 +57,17 @@ class Agent:
         self.loss_fn = nn.MSELoss()
         self.optimizer = None
 
+        self.policy_dqn = None
+        self.target_dqn = None
+        
+        self.episode = 0
+        self.replay_memory = None
+        self.epsilon = 0
+        self.step_counter = 0
+        self.best_reward = -9999999
+        self.epsilon_history = []
+        self.rewards_per_episode = []
+
         # self.LOG_FILE = os.path.join(RUNS_DIR, f'{self.hyperparameter_set}.log')
         # self.MODEL_FILE = os.path.join(RUNS_DIR, f'{self.hyperparameter_set}.pt')
         # self.GRAPH_FILE = os.path.join(RUNS_DIR, f'{self.hyperparameter_set}.png')
@@ -65,7 +77,7 @@ class Agent:
         # será inserido dinamicamente
         self.MODEL_FILE = f'{self.hyperparameter_set}.pt'
 
-    def run(self, is_training=True, render=True):
+    def run(self, is_training=True, render=False):
         if is_training:
             start_time = datetime.now()
             last_graph_update_time = start_time
@@ -76,37 +88,37 @@ class Agent:
                 file.write(log_message + '\n')
 
         # env = gym.make("MiniWorld-OneRoom-v0", render_mode="human" if render else None)
-        env = gym.make('MiniWorld-OneRoom-v0', render_mode="human")
+        env = gym.make('MiniWorld-OneRoom-v0', render_mode="human", size=20)
 
         n_actions = env.action_space.n
 
-        policy_dqn = DQCNN(self.input_channels, n_actions, self.fc_nodes).to(device)
+        self.policy_dqn = DQCNN(self.input_channels, n_actions, self.fc_nodes).to(device)
 
         if is_training:
-            memory = ReplayMemory(self.replay_memory_size)
+            self.replay_memory = ReplayMemory(self.replay_memory_size)
 
-            epsilon = self.epsilon_init
+            self.epsilon = self.epsilon_init
 
-            target_dqn = DQCNN(self.input_channels, n_actions, self.fc_nodes).to(device)
-            target_dqn.load_state_dict(policy_dqn.state_dict())
+            self.target_dqn = DQCNN(self.input_channels, n_actions, self.fc_nodes).to(device)
+            self.target_dqn.load_state_dict(self.policy_dqn.state_dict())
 
-            step_counter = 0
+            self.step_counter = 0
 
-            self.optimizer = torch.optim.Adam(policy_dqn.parameters(), lr=self.learning_rate_a)
+            self.optimizer = torch.optim.Adam(self.policy_dqn.parameters(), lr=self.learning_rate_a)
 
-            best_reward = -9999999
-            epsilon_history = []
+            self.best_reward = -9999999
+            self.epsilon_history = []
         else:
             selected_model = "last_weight"
             print(f"Loading the model number {selected_model}")
-            policy_dqn.load_state_dict(torch.load(f"{RUNS_DIR}/{selected_model}", weights_only=False))
+            self.policy_dqn.load_state_dict(torch.load(f"{RUNS_DIR}/{selected_model}", weights_only=False))
 
-            policy_dqn.eval()
+            self.policy_dqn.eval()
 
-        rewards_per_episode = []
+        self.rewards_per_episode = []
         #roda indefinidamente
         # for episode in itertools.count():
-        for episode in range(9999999):
+        while self.episode < 9999999:
 
             state, _ = env.reset()
             state = torch.tensor(state, dtype=torch.float, device=device)
@@ -117,13 +129,13 @@ class Agent:
 
             while not terminated and not truncated and episode_reward < self.stop_on_reward:
 
-                if is_training and random.random() < epsilon:
+                if is_training and random.random() < self.epsilon:
                     action = env.action_space.sample()  # agent policy that uses the observation and info
                     action = torch.tensor(action, dtype=torch.float, device=device)
                 else:
                     with torch.no_grad():
                         # tensor([1,2,3,...]) ==> tensor([[1,2,3,...]])
-                        action = policy_dqn(state.unsqueeze(1).permute(1, 3, 0, 2)).squeeze().argmax()
+                        action = self.policy_dqn(state.unsqueeze(1).permute(1, 3, 0, 2)).squeeze().argmax()
 
                 new_state, reward, terminated, truncated, info = env.step(int(action.item()))
                 episode_reward += reward
@@ -133,53 +145,53 @@ class Agent:
 
 
                 if is_training:
-                    memory.append((state, action, new_state, reward, terminated))
+                    self.replay_memory.append((state, action, new_state, reward, terminated))
 
-                    step_counter += 1
+                    self.step_counter += 1
                 
                 state = new_state
                 if render:                
                     env.render()
 
-            rewards_per_episode.append(episode_reward)
+            self.rewards_per_episode.append(episode_reward)
 
             if is_training:
-                if episode_reward > best_reward:
-                    percentage_gain = f"{(episode_reward - best_reward)/best_reward*100:+.1f}" if best_reward != 0 else f"{100:+.1f}"
-                    log_message = f'{datetime.now().strftime(DATE_FORMAT)}: New best reward {episode_reward:0.1f} ({percentage_gain}%) at episode {episode} saving model...'
+                if episode_reward > self.best_reward:
+                    percentage_gain = f"{(episode_reward - self.best_reward)/self.best_reward*100:+.1f}" if self.best_reward != 0 else f"{100:+.1f}"
+                    log_message = f'{datetime.now().strftime(DATE_FORMAT)}: New best reward {episode_reward:0.1f} ({percentage_gain}%) at episode {self.episode} saving model...'
                     print(log_message)
                     with open(self.LOG_FILE, 'a') as file:
                         file.write(log_message + '\n')
                     
-                        torch.save(policy_dqn.state_dict(), f"{RUNS_DIR}/{episode}")
-                    best_reward = episode_reward
+                        torch.save(self.policy_dqn.state_dict(), f"{RUNS_DIR}/{self.episode}")
+                    self.best_reward = episode_reward
 
-                if(episode % 100 and epsilon < 0.1):
-                    torch.save(policy_dqn.state_dict(), f"{RUNS_DIR}/last_weight")
+                if(self.episode % 100 and self.epsilon < 0.1):
+                    torch.save(self.policy_dqn.state_dict(), f"{RUNS_DIR}/last_weight")
 
                 current_time = datetime.now()
                 if current_time - last_graph_update_time > timedelta(seconds = 10):
-                    print(f"Maior Recompensa: {max(rewards_per_episode)}")
-                    self.save_graph(rewards_per_episode, epsilon_history)
+                    print(f"Maior Recompensa: {max(self.rewards_per_episode)}")
+                    self.save_graph()
                     last_graph_update_time = current_time
                     
-                epsilon = max(epsilon * self.epsilon_decay, self.epsilon_min)
-                epsilon_history.append(epsilon)
+                self.epsilon = max(self.epsilon * self.epsilon_decay, self.epsilon_min)
+                self.epsilon_history.append(self.epsilon)
 
-                if(len(memory) > self.mini_batch_size):
+                if(len(self.replay_memory) > self.mini_batch_size):
 
-                    mini_batch = memory.sample(self.mini_batch_size)
+                    mini_batch = self.replay_memory.sample(self.mini_batch_size)
 
-                    self.optimize(mini_batch, policy_dqn, target_dqn)
+                    self.optimize(mini_batch)
 
                     #atualiza a target network depois de alguns passos
-                    if(step_counter > self.network_sync_rate):
-                        target_dqn.load_state_dict(policy_dqn.state_dict())
-                        step_counter=0
+                    if(self.step_counter > self.network_sync_rate):
+                        self.target_dqn.load_state_dict(self.policy_dqn.state_dict())
+                        self.step_counter=0
         
         cv.destroyAllWindows()
 
-    def optimize(self, mini_batch, policy_dqn, target_dqn):
+    def optimize(self, mini_batch):
         # Transpose the list of experiences and separate each element
         states, actions, new_states, rewards, terminations = zip(*mini_batch)
 
@@ -200,17 +212,17 @@ class Agent:
 
         with torch.no_grad():
                 # Calculate target Q values (expected returns)
-                target_q = rewards + (1-terminations) * self.discount_factor_g * target_dqn(new_states).max(dim=1)[0]
+                target_q = rewards + (1-terminations) * self.discount_factor_g * self.target_dqn(new_states).max(dim=1)[0]
                 '''
-                    target_dqn(new_states)  ==> tensor([[1,2,3],[4,5,6]])
+                    self.target_dqn(new_states)  ==> tensor([[1,2,3],[4,5,6]])
                         .max(dim=1)         ==> torch.return_types.max(values=tensor([3,6]), indices=tensor([3, 0, 0, 1]))
                             [0]             ==> tensor([3,6])
                 '''
 
         # Calcuate Q values from current policy
-        current_q = policy_dqn(states).gather(dim=1, index=actions.unsqueeze(dim=1).long()).squeeze()
+        current_q = self.policy_dqn(states).gather(dim=1, index=actions.unsqueeze(dim=1).long()).squeeze()
         '''
-            policy_dqn(states)  ==> tensor([[1,2,3],[4,5,6]])
+            self.policy_dqn(states)  ==> tensor([[1,2,3],[4,5,6]])
                 actions.unsqueeze(dim=1)
                 .gather(1, actions.unsqueeze(dim=1))  ==>
                     .squeeze()                    ==>
@@ -224,14 +236,14 @@ class Agent:
         loss.backward()             # Compute gradients
         self.optimizer.step()       # Update network parameters i.e. weights and biases
 
-    def save_graph(self, rewards_per_episode, epsilon_history):
+    def save_graph(self):
             # Save plots
             fig = plt.figure(1)
 
             # Plot average rewards (Y-axis) vs episodes (X-axis)
-            mean_rewards = np.zeros(len(rewards_per_episode))
+            mean_rewards = np.zeros(len(self.rewards_per_episode))
             for x in range(len(mean_rewards)):
-                mean_rewards[x] = np.mean(rewards_per_episode[max(0, x-99):(x+1)])
+                mean_rewards[x] = np.mean(self.rewards_per_episode[max(0, x-99):(x+1)])
             plt.subplot(121) # plot on a 1 row x 2 col grid, at cell 1
             # plt.xlabel('Episodes')
             plt.ylabel('Mean Rewards')
@@ -241,7 +253,7 @@ class Agent:
             plt.subplot(122) # plot on a 1 row x 2 col grid, at cell 2
             # plt.xlabel('Time Steps')
             plt.ylabel('Epsilon Decay')
-            plt.plot(epsilon_history)
+            plt.plot(self.epsilon_history)
 
             plt.subplots_adjust(wspace=1.0, hspace=1.0)
 
