@@ -76,7 +76,7 @@ class Agent:
                 file.write(log_message + '\n')
 
         # env = gym.make("MiniWorld-OneRoom-v0", render_mode="human" if render else None)
-        env = gym.make('MiniWorld-OneRoom-v0', render_mode="rgb_array")
+        env = gym.make('MiniWorld-OneRoom-v0', render_mode="human")
 
         n_actions = env.action_space.n
 
@@ -106,7 +106,7 @@ class Agent:
         rewards_per_episode = []
         #roda indefinidamente
         # for episode in itertools.count():
-        for episode in range(1):
+        for episode in range(9999999):
 
             state, _ = env.reset()
             state = torch.tensor(state, dtype=torch.float, device=device)
@@ -138,13 +138,10 @@ class Agent:
                     step_counter += 1
                 
                 state = new_state
+                if render:                
+                    env.render()
 
             rewards_per_episode.append(episode_reward)
-            if render:                
-                frame = np.ascontiguousarray(env.render())[..., :-1]
-                # img = np.ascontiguousarray(img)[..., :-1]  # make image C_CONTIGUOUS and drop alpha channel
-                print(frame.shape)
-                cv.imshow("Window", cv.cvtColor(frame, cv.COLOR_RGB2BGR))
 
             if is_training:
                 if episode_reward > best_reward:
